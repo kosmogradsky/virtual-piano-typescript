@@ -1,5 +1,8 @@
 import { Result, Err, Ok, map3 } from "./Result";
 
+const BYTE_MASK = 0x80;
+const HIGHBIT_MASK = 0x7f;
+
 class Midi {
   readonly type = "Midi";
 
@@ -20,8 +23,8 @@ type MidiTracks = null;
 
 const pop = (
   n: number,
-  byteArray: Uint8Array
-): Result<string, [Uint8Array, Uint8Array]> => {
+  byteArray: number[]
+): Result<string, [number[], number[]]> => {
   const result = byteArray.slice(0, n);
   const rest = byteArray.slice(n);
 
@@ -30,7 +33,7 @@ const pop = (
     : new Err("malformed midi: unexpected end of file");
 };
 
-const parseNumber = (byteArray: Uint8Array) =>
+const parseNumber = (byteArray: number[]) =>
   byteArray.reduceRight((number, byte, index) => {
     const byteLength = 8;
     const bitshiftedValue = byte << (index * byteLength);
@@ -38,12 +41,95 @@ const parseNumber = (byteArray: Uint8Array) =>
     return number + bitshiftedValue;
   }, 0);
 
-const parseString = (charArray: Uint8Array) =>
+const parseVariableLengthNumber = (byteArray: number[]) =>
+  byteArray.reduce((number, byte, index) => {
+    const rawByteValue = byte & HIGHBIT_MASK;
+    const variableByteLength = 7;
+    const bitshiftedValue = rawByteValue << (index * variableByteLength);
+
+    return number + bitshiftedValue;
+  }, 0);
+
+const parseString = (charArray: number[]) =>
   Array.from(charArray)
     .map(c => String.fromCharCode(c))
     .join("");
 
-const parseHeader = (midiBytes: Uint8Array): Result<string, MidiHeader> => {
+const extractVariableChunk = (midiBytes: number[]): number[] => {
+  const variableByteChunk = (bytes: number[]): number[] => {
+    if (bytes.length === 0) return [];
+
+    const nByte = bytes[0];
+    bytes = bytes.slice(1);
+
+    if ((nByte & BYTE_MASK) !== BYTE_MASK) return [nByte];
+
+    return [nByte].concat(variableByteChunk(bytes));
+  };
+
+  return variableByteChunk(midiBytes);
+};
+
+function isMetaEvent(code: number) {
+  return code === 0xff;
+}
+
+function isSysexEvent(code: number) {
+  return 0xf0 <= code && code <= 0xf7;
+}
+
+function isNoteOffEvent(code: number) {
+  return 0x80 <= code && code <= 0x8f;
+}
+
+function isNoteOnEvent(code: number) {
+  return 0x90 <= code && code <= 0x9f;
+}
+
+function isNoteEvent(code: number) {
+  return isNoteOnEvent(code) || isNoteOffEvent(code);
+}
+
+function isPolyphonicAftertouchEvent(code: number) {
+  return 0xa0 <= code && code <= 0xaf;
+}
+
+function isControlChangeEvent(code: number) {
+  return 0xb0 <= code && code <= 0xbf;
+}
+
+function isProgramChangeEvent(code: number) {
+  return 0xc0 <= code && code <= 0xcf;
+}
+
+function isChannelAftertouchEvent(code: number) {
+  return 0xd0 <= code && code <= 0xdf;
+}
+
+function isPitchWheelEvent(code: number) {
+  return 0xe0 <= code && code <= 0xef;
+}
+
+function isChannelEvent(code: number) {
+  return (
+    isNoteEvent(code) ||
+    isPolyphonicAftertouchEvent(code) ||
+    isControlChangeEvent(code) ||
+    isProgramChangeEvent(code) ||
+    isChannelAftertouchEvent(code) ||
+    isPitchWheelEvent(code)
+  );
+}
+
+function isValidEventCode(code: number) {
+  if (isSysexEvent(code)) return true;
+  if (isMetaEvent(code)) return true;
+  if (isChannelEvent(code)) return true;
+
+  return false;
+}
+
+const parseHeader = (midiBytes: number[]): Result<string, MidiHeader> => {
   const parseChunkId = (): Result<string, string> => {
     const chunkId = parseString(midiBytes.slice(0, 4));
 
@@ -83,14 +169,14 @@ const parseHeader = (midiBytes: Uint8Array): Result<string, MidiHeader> => {
   );
 };
 
-const parseEvents = (midiBytes: Uint8Array) => {
+const parseEvents = (midiBytes: number[]) => {
   const events = [];
   const onEventsCache = {};
   let lastEventCode = 0;
 
   while (midiBytes.length) {
-    const deltaBytes = parseNextVariableChunk(midiBytes);
-    const deltaTime = parseByteArrayToNumber(deltaBytes, true);
+    const deltaBytes = extractVariableChunk(midiBytes);
+    const deltaTime = parseVariableLengthNumber(deltaBytes);
     let eventCode = 0;
 
     midiBytes = midiBytes.slice(deltaBytes.length);
@@ -105,7 +191,7 @@ const parseEvents = (midiBytes: Uint8Array) => {
       midiBytes = midiBytes.slice(1);
     }
 
-    let dataBytes = [];
+    let dataBytes: number[] = [];
     let midiEvent = {};
 
     if (isMetaEvent(eventCode)) {
@@ -246,7 +332,7 @@ const parseEvents = (midiBytes: Uint8Array) => {
   return events;
 };
 
-const parseTracks = (midiBytes: Uint8Array): Result<string, MidiTrack[]> => {
+const parseTracks = (midiBytes: number[]): Result<string, MidiTrack[]> => {
   if (midiBytes.length === 0) {
     return new Ok([]);
   }
@@ -293,7 +379,7 @@ const parseTracks = (midiBytes: Uint8Array): Result<string, MidiTrack[]> => {
   );
 };
 
-export const parseMIDI = (midiBytes: Uint8Array): Result<string, Midi> => {
+export const parseMIDI = (midiBytes: number[]): Result<string, Midi> => {
   const headerOffset = 14;
 
   pop(headerOffset, midiBytes).map(([headerBytes, restMidiBytes]) => {

@@ -1,9 +1,9 @@
-interface OkExtract<A> {
+export interface OkExtract<A> {
   type: "Result/Ok";
   value: A;
 }
 
-interface ErrExtract<E> {
+export interface ErrExtract<E> {
   type: "Result/Err";
   error: E;
 }
@@ -54,6 +54,14 @@ export class Err<E> implements Result<E, never> {
     return { type: "Result/Err", error: this.error };
   }
 }
+
+export const fromNull = <E, A>(err: E, value: A | null): Result<E, A> =>
+  value === null ? new Err(err) : new Ok(value);
+
+export const fromUndefined = <E, A>(
+  err: E,
+  value: A | undefined
+): Result<E, A> => (value === undefined ? new Err(err) : new Ok(value));
 
 export const map3 = <E, A, B, C, D>(
   ra: Result<E, A>,
