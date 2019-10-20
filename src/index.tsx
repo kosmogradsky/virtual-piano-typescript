@@ -1,9 +1,18 @@
-import { fromDescriptor } from "./declarativeHtml";
+import {
+  fromDescriptor,
+  Div,
+  Style,
+  Dataset,
+  Input,
+  Type,
+  Id,
+  OnChange
+} from "./declarativeHtml";
+// @ts-ignore
+import { instrument } from "soundfont-player";
+// @ts-ignore
+import { MIDIFile } from "./MIDIFile";
 
-// // @ts-ignore
-// import { instrument } from "soundfont-player";
-// // @ts-ignore
-// import { MIDIFile } from "./MIDIFile";
 // import * as React from "react";
 // import { render } from "react-dom";
 // import { createStore, StoreEnhancer, Store, compose } from "redux";
@@ -71,16 +80,6 @@ import { fromDescriptor } from "./declarativeHtml";
 // );
 
 // type MidiNote = any;
-
-// const range = (from: number, to: number): number[] => {
-//   var result = [];
-//   var n = from;
-//   while (n < to) {
-//     result.push(n);
-//     n += 1;
-//   }
-//   return result;
-// };
 
 // const getNextTick = <A extends { when: number }>(
 //   step: number,
@@ -179,7 +178,7 @@ import { fromDescriptor } from "./declarativeHtml";
 // let currentTime = 0;
 // let duration: number = 0;
 
-// input.addEventListener("change", function(event) {
+// (input as HTMLInputElement).addEventListener("change", function(event) {
 //   const reader = new FileReader();
 
 //   if (input.files) {
@@ -228,80 +227,127 @@ import { fromDescriptor } from "./declarativeHtml";
 //   return intervalReference;
 // };
 
-// const Piano: React.FunctionComponent = () => (
-//   <div
-//     style={{ marginTop: 20, marginLeft: 10, height: 85, position: "relative" }}
-//   >
-//     {range(21, 109).map((midiNumber, index) => {
-//       const pitchPositions: Record<number, number> = {
-//         0: 0,
-//         1: 0.625,
-//         2: 1,
-//         3: 1.75,
-//         4: 2,
-//         5: 3,
-//         6: 3.6,
-//         7: 4,
-//         8: 4.7,
-//         9: 5,
-//         10: 5.75,
-//         11: 6
-//       };
-
-//       return [1, 3, 6, 8, 10].includes(midiNumber % 12) ? (
-//         <div
-//           className="key"
-//           data-pitch={midiNumber}
-//           style={{
-//             left:
-//               Math.floor(midiNumber / 12 - 2) * 26 * 7 +
-//               26 * 2 +
-//               pitchPositions[midiNumber % 12] * 26,
-//             position: "absolute",
-//             boxSizing: "border-box",
-//             width: 0.65 * 25,
-//             height: "66%",
-//             backgroundColor: "black",
-//             zIndex: 1
-//           }}
-//           key={midiNumber}
-//         />
-//       ) : (
-//         <div
-//           className="key"
-//           data-pitch={midiNumber}
-//           style={{
-//             left:
-//               Math.floor(midiNumber / 12 - 2) * 26 * 7 +
-//               26 * 2 +
-//               pitchPositions[midiNumber % 12] * 26,
-//             position: "absolute",
-//             boxSizing: "border-box",
-//             marginLeft: 0.5,
-//             width: 25,
-//             height: "100%",
-//             border: "1px solid black",
-//             backgroundColor: "white"
-//           }}
-//           key={midiNumber}
-//         />
-//       );
-//     })}
-//   </div>
-// );
-
-// render(<Piano />, document.getElementById("root")!);
-
 const range = (length: number, from: number) =>
   Array(length)
     .fill(undefined)
     .map((_value, index) => from + index);
 
-range(88, 21);
+const pitchPositions: Record<number, number> = {
+  0: 0,
+  1: 0.625,
+  2: 1,
+  3: 1.75,
+  4: 2,
+  5: 3,
+  6: 3.6,
+  7: 4,
+  8: 4.7,
+  9: 5,
+  10: 5.75,
+  11: 6
+};
 
-const element = fromDescriptor({
-  tagname: "div",
-  children: [{ tagname: "div", children: [] }]
-});
+const element = fromDescriptor(
+  new Div(
+    [
+      new Style({
+        marginTop: "10px",
+        marginLeft: "10px",
+        height: "85px",
+        position: "relative"
+      })
+    ],
+    [
+      new Div(
+        [new Style({ marginBottom: "10px" })],
+        [
+          new Input(
+            [
+              new Type("file"),
+              new OnChange(event => {
+                const reader = new FileReader();
+
+                if (event.target === null) {
+                  throw new Error("event.target is null");
+                }
+
+                const target = event.target as HTMLInputElement;
+                if (target.files === null) {
+                  throw new Error("event.target.files is null");
+                }
+
+                reader.readAsArrayBuffer(target.files[0]);
+
+                reader.onloadend = () => {
+                  if (reader.result instanceof ArrayBuffer) {
+                    const midiFile = new MIDIFile(reader.result);
+                    const parsed: {
+                      tracks: any[];
+                      duration: number;
+                    } = midiFile.parseSong();
+
+                    const midi = parsed.tracks
+                      .flatMap(track => track.notes)
+                      .sort((a, b) => a.when - b.when);
+
+                    console.log(midi);
+                  } else {
+                    throw new Error("FileReader result is not an ArrayBuffer");
+                  }
+                };
+              })
+            ],
+            []
+          )
+        ]
+      ),
+      new Div(
+        [],
+        range(88, 21).map(keyNumber =>
+          [1, 3, 6, 8, 10].includes(keyNumber % 12)
+            ? new Div(
+                [
+                  new Style({
+                    left:
+                      Math.floor(keyNumber / 12 - 2) * 26 * 7 +
+                      26 * 2 +
+                      pitchPositions[keyNumber % 12] * 26 +
+                      "px",
+                    position: "absolute",
+                    boxSizing: "border-box",
+                    width: 0.65 * 25 + "px",
+                    height: "66%",
+                    backgroundColor: "black",
+                    zIndex: 1
+                  }),
+                  new Dataset({ pitch: keyNumber.toString() })
+                ],
+                []
+              )
+            : new Div(
+                [
+                  new Style({
+                    left:
+                      Math.floor(keyNumber / 12 - 2) * 26 * 7 +
+                      26 * 2 +
+                      pitchPositions[keyNumber % 12] * 26 +
+                      "px",
+                    position: "absolute",
+                    boxSizing: "border-box",
+                    marginLeft: "0.5px",
+                    width: "25px",
+                    height: "100%",
+                    border: "1px solid black",
+                    backgroundColor: "white"
+                  }),
+                  new Dataset({ pitch: keyNumber.toString() })
+                ],
+                []
+              )
+        )
+      )
+    ]
+  )
+);
 
 document.body.appendChild(element);
