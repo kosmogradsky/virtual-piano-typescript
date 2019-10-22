@@ -8,10 +8,10 @@ import {
   Id,
   OnChange
 } from "./declarativeHtml";
-// @ts-ignore
 import { instrument } from "soundfont-player";
-// @ts-ignore
 import { MIDIFile } from "./MIDIFile";
+import { createAppStore, Loop, EMPTY, LoopReducer } from "sudetenwaltz/Loop";
+import { EMPTY as RX_EMPTY } from "rxjs";
 
 // import * as React from "react";
 // import { render } from "react-dom";
@@ -227,6 +227,56 @@ import { MIDIFile } from "./MIDIFile";
 //   return intervalReference;
 // };
 
+// ACTIONS
+
+interface FetchMidiSuccess {
+  type: "FetchMidiSuccess";
+  notes: MidiNote[];
+}
+
+type Action = FetchMidiSuccess;
+
+// EFFECTS
+
+interface RenderControls {
+  type: "RenderControls";
+}
+
+// STATE
+
+interface MidiNote {
+  when: number;
+  duration: number;
+  pitch: number;
+}
+
+interface State {
+  notes: MidiNote[];
+  playQueue: MidiNote[];
+}
+
+const initialLoop: Loop<State, Action> = [
+  {
+    notes: [],
+    playQueue: []
+  },
+  EMPTY
+];
+
+const reducer: LoopReducer<State, Action> = (prevState, action) => {
+  switch (action.type) {
+    case "FetchMidiSuccess": {
+      return [{ ...prevState, notes: action.notes }, EMPTY];
+    }
+  }
+};
+
+const epic = () => RX_EMPTY;
+
+const store = createAppStore(initialLoop, reducer, epic);
+
+store.model$.subscribe(console.log.bind(console));
+
 const range = (length: number, from: number) =>
   Array(length)
     .fill(undefined)
@@ -286,11 +336,11 @@ const element = fromDescriptor(
                       duration: number;
                     } = midiFile.parseSong();
 
-                    const midi = parsed.tracks
+                    const notes = parsed.tracks
                       .flatMap(track => track.notes)
                       .sort((a, b) => a.when - b.when);
 
-                    console.log(midi);
+                    store.dispatch({ type: "FetchMidiSuccess", notes });
                   } else {
                     throw new Error("FileReader result is not an ArrayBuffer");
                   }
