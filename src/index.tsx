@@ -1,17 +1,27 @@
-import {
-  fromDescriptor,
-  Div,
-  Style,
-  Dataset,
-  Input,
-  Type,
-  Id,
-  OnChange
-} from "./declarativeHtml";
+import * as React from "react";
 import { instrument } from "soundfont-player";
 import { MIDIFile } from "./MIDIFile";
-import { createAppStore, Loop, EMPTY, LoopReducer } from "sudetenwaltz/Loop";
-import { EMPTY as RX_EMPTY } from "rxjs";
+import {
+  createAppStore,
+  Loop,
+  EMPTY,
+  LoopReducer,
+  SilentEff,
+  ofType,
+  Epic,
+  Dispatch,
+  combineEpics
+} from "sudetenwaltz/Loop";
+import * as Time from "sudetenwaltz/Time";
+import { ignoreElements, tap } from "rxjs/operators";
+import { render } from "react-dom";
+
+let piano: any = undefined;
+
+const context = new AudioContext() as any;
+instrument(context, "acoustic_grand_piano").then(loadedPiano => {
+  piano = loadedPiano;
+});
 
 // import * as React from "react";
 // import { render } from "react-dom";
@@ -234,12 +244,24 @@ interface FetchMidiSuccess {
   notes: MidiNote[];
 }
 
-type Action = FetchMidiSuccess;
+interface Play {
+  type: "Play";
+}
+
+interface Tick {
+  type: "Tick";
+}
+
+type Action = FetchMidiSuccess | Play | Tick;
 
 // EFFECTS
 
-interface RenderControls {
-  type: "RenderControls";
+class RenderView extends SilentEff {
+  readonly type = "RenderView";
+
+  constructor(readonly state: State) {
+    super();
+  }
 }
 
 // STATE
@@ -250,32 +272,101 @@ interface MidiNote {
   pitch: number;
 }
 
-interface State {
-  notes: MidiNote[];
-  playQueue: MidiNote[];
+interface UploadFileState {
+  type: "UploadFileState";
 }
 
+interface ReadyToPlayState {
+  type: "ReadyToPlayState";
+  notes: MidiNote[];
+}
+
+interface PlayingState {
+  type: "PlayingState";
+  notes: MidiNote[];
+  playQueue: MidiNote[];
+  currentTime: number;
+}
+
+type State = UploadFileState | ReadyToPlayState | PlayingState;
+
+const initialState: UploadFileState = {
+  type: "UploadFileState"
+};
+
 const initialLoop: Loop<State, Action> = [
-  {
-    notes: [],
-    playQueue: []
-  },
-  EMPTY
+  initialState,
+  new RenderView(initialState)
 ];
 
 const reducer: LoopReducer<State, Action> = (prevState, action) => {
   switch (action.type) {
     case "FetchMidiSuccess": {
-      return [{ ...prevState, notes: action.notes }, EMPTY];
+      const state: ReadyToPlayState = {
+        type: "ReadyToPlayState",
+        notes: action.notes
+      };
+
+      return [state, new RenderView(state)];
+    }
+    case "Play": {
+      return prevState.type === "ReadyToPlayState"
+        ? [
+            {
+              type: "PlayingState",
+              notes: prevState.notes,
+              playQueue: prevState.notes,
+              currentTime: 0
+            },
+            new Time.SetInterval(5, () => ({ type: "Tick" }))
+          ]
+        : [prevState, EMPTY];
+    }
+    case "Tick": {
+      if (prevState.type === "PlayingState") {
+        const currentTime = prevState.currentTime + 5;
+        const notesToPlay = [];
+
+        let index = 0;
+        while (
+          prevState.playQueue[index] &&
+          prevState.playQueue[index].when * 1000 < currentTime
+        ) {
+          notesToPlay.push(prevState.playQueue[index]);
+          index++;
+        }
+
+        notesToPlay.forEach(note => {
+          piano.play(note.pitch, undefined, { duration: note.duration });
+        });
+
+        return [
+          {
+            ...prevState,
+            currentTime,
+            playQueue: prevState.playQueue.slice(index)
+          },
+          EMPTY
+        ];
+      }
+
+      return [prevState, EMPTY];
     }
   }
 };
 
-const epic = () => RX_EMPTY;
+const renderViewEpic: Epic<Action> = effect$ =>
+  effect$.pipe(
+    ofType<RenderView>("RenderView"),
+    tap(({ state }) => {
+      renderView(state);
+    }),
+    ignoreElements()
+  );
+
+const epic = combineEpics<Action>(renderViewEpic, Time.epic as Epic<Action>);
 
 const store = createAppStore(initialLoop, reducer, epic);
-
-store.model$.subscribe(console.log.bind(console));
 
 const range = (length: number, from: number) =>
   Array(length)
@@ -297,107 +388,140 @@ const pitchPositions: Record<number, number> = {
   11: 6
 };
 
-const element = fromDescriptor(
-  new Div(
-    [
-      new Style({
-        marginTop: "10px",
-        marginLeft: "10px",
-        height: "85px",
+const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const reader = new FileReader();
+
+  if (event.target === null) {
+    throw new Error("event.target is null");
+  }
+
+  const target = event.target as HTMLInputElement;
+  if (target.files === null) {
+    throw new Error("event.target.files is null");
+  }
+
+  reader.readAsArrayBuffer(target.files[0]);
+
+  reader.onloadend = () => {
+    if (reader.result instanceof ArrayBuffer) {
+      const midiFile = new MIDIFile(reader.result);
+      const parsed: {
+        tracks: any[];
+        duration: number;
+      } = midiFile.parseSong();
+
+      const notes = parsed.tracks
+        .flatMap(track => track.notes)
+        .sort((a, b) => a.when - b.when);
+
+      store.dispatch({ type: "FetchMidiSuccess", notes });
+    } else {
+      throw new Error("FileReader result is not an ArrayBuffer");
+    }
+  };
+};
+
+const Main: React.FunctionComponent<{
+  state: State;
+  dispatch: Dispatch<Action>;
+}> = ({ state, dispatch }) => {
+  const getControls = () => {
+    switch (state.type) {
+      case "UploadFileState": {
+        return <input type="file" onChange={handleFileChange} />;
+      }
+      case "ReadyToPlayState": {
+        return (
+          <>
+            <button
+              type="button"
+              id="play-button"
+              style={{ marginRight: 5 }}
+              onClick={() => dispatch({ type: "Play" })}
+            >
+              Play
+            </button>
+            <button type="button" id="pause-button" style={{ marginRight: 5 }}>
+              Pause
+            </button>
+            <button type="button" id="stop-button" style={{ marginRight: 5 }}>
+              Stop
+            </button>
+            {/* <input
+              id="position"
+              type="range"
+              min="0"
+              max="100"
+              value="0"
+              step="1"
+            /> */}
+          </>
+        );
+      }
+    }
+  };
+
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        marginLeft: 10,
+        height: 85,
         position: "relative"
-      })
-    ],
-    [
-      new Div(
-        [new Style({ marginBottom: "10px" })],
-        [
-          new Input(
-            [
-              new Type("file"),
-              new OnChange(event => {
-                const reader = new FileReader();
-
-                if (event.target === null) {
-                  throw new Error("event.target is null");
-                }
-
-                const target = event.target as HTMLInputElement;
-                if (target.files === null) {
-                  throw new Error("event.target.files is null");
-                }
-
-                reader.readAsArrayBuffer(target.files[0]);
-
-                reader.onloadend = () => {
-                  if (reader.result instanceof ArrayBuffer) {
-                    const midiFile = new MIDIFile(reader.result);
-                    const parsed: {
-                      tracks: any[];
-                      duration: number;
-                    } = midiFile.parseSong();
-
-                    const notes = parsed.tracks
-                      .flatMap(track => track.notes)
-                      .sort((a, b) => a.when - b.when);
-
-                    store.dispatch({ type: "FetchMidiSuccess", notes });
-                  } else {
-                    throw new Error("FileReader result is not an ArrayBuffer");
-                  }
-                };
-              })
-            ],
-            []
+      }}
+    >
+      <div style={{ marginBottom: 10, display: "flex", alignItems: "center" }}>
+        {getControls()}
+      </div>
+      <div>
+        {range(88, 21).map(keyNumber =>
+          [1, 3, 6, 8, 10].includes(keyNumber % 12) ? (
+            <div
+              key={keyNumber}
+              style={{
+                left:
+                  Math.floor(keyNumber / 12 - 2) * 26 * 7 +
+                  26 * 2 +
+                  pitchPositions[keyNumber % 12] * 26,
+                position: "absolute",
+                boxSizing: "border-box",
+                width: 0.65 * 25,
+                height: "66%",
+                backgroundColor: "black",
+                zIndex: 1
+              }}
+              data-pitch={keyNumber}
+            />
+          ) : (
+            <div
+              key={keyNumber}
+              style={{
+                left:
+                  Math.floor(keyNumber / 12 - 2) * 26 * 7 +
+                  26 * 2 +
+                  pitchPositions[keyNumber % 12] * 26,
+                position: "absolute",
+                boxSizing: "border-box",
+                marginLeft: 0.5,
+                width: 25,
+                height: "100%",
+                border: "1px solid black",
+                backgroundColor: "white"
+              }}
+              data-pitch={keyNumber}
+            />
           )
-        ]
-      ),
-      new Div(
-        [],
-        range(88, 21).map(keyNumber =>
-          [1, 3, 6, 8, 10].includes(keyNumber % 12)
-            ? new Div(
-                [
-                  new Style({
-                    left:
-                      Math.floor(keyNumber / 12 - 2) * 26 * 7 +
-                      26 * 2 +
-                      pitchPositions[keyNumber % 12] * 26 +
-                      "px",
-                    position: "absolute",
-                    boxSizing: "border-box",
-                    width: 0.65 * 25 + "px",
-                    height: "66%",
-                    backgroundColor: "black",
-                    zIndex: 1
-                  }),
-                  new Dataset({ pitch: keyNumber.toString() })
-                ],
-                []
-              )
-            : new Div(
-                [
-                  new Style({
-                    left:
-                      Math.floor(keyNumber / 12 - 2) * 26 * 7 +
-                      26 * 2 +
-                      pitchPositions[keyNumber % 12] * 26 +
-                      "px",
-                    position: "absolute",
-                    boxSizing: "border-box",
-                    marginLeft: "0.5px",
-                    width: "25px",
-                    height: "100%",
-                    border: "1px solid black",
-                    backgroundColor: "white"
-                  }),
-                  new Dataset({ pitch: keyNumber.toString() })
-                ],
-                []
-              )
-        )
-      )
-    ]
-  )
-);
+        )}
+      </div>
+    </div>
+  );
+};
 
-document.body.appendChild(element);
+store.model$.subscribe();
+
+const renderView = (state: State) => {
+  render(
+    <Main state={state} dispatch={store.dispatch} />,
+    document.getElementById("root")
+  );
+};
