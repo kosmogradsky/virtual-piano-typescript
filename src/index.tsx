@@ -285,6 +285,7 @@ interface PlayingState {
   type: "PlayingState";
   notes: MidiNote[];
   playQueue: MidiNote[];
+  lastTickTimestamp: number;
   currentTime: number;
 }
 
@@ -316,6 +317,7 @@ const reducer: LoopReducer<State, Action> = (prevState, action) => {
               type: "PlayingState",
               notes: prevState.notes,
               playQueue: prevState.notes,
+              lastTickTimestamp: performance.now(),
               currentTime: 0
             },
             new Time.SetInterval(5, () => ({ type: "Tick" }))
@@ -324,7 +326,10 @@ const reducer: LoopReducer<State, Action> = (prevState, action) => {
     }
     case "Tick": {
       if (prevState.type === "PlayingState") {
-        const currentTime = prevState.currentTime + 5;
+        const currentTickTimestamp = performance.now();
+        const currentTime =
+          prevState.currentTime +
+          (currentTickTimestamp - prevState.lastTickTimestamp);
         const notesToPlay = [];
 
         let index = 0;
@@ -344,7 +349,8 @@ const reducer: LoopReducer<State, Action> = (prevState, action) => {
           {
             ...prevState,
             currentTime,
-            playQueue: prevState.playQueue.slice(index)
+            playQueue: prevState.playQueue.slice(index),
+            lastTickTimestamp: currentTickTimestamp
           },
           EMPTY
         ];
