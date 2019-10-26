@@ -1,5 +1,5 @@
 import * as React from "react";
-import { instrument } from "soundfont-player";
+import { instrument, Player } from "soundfont-player";
 import { MIDIFile } from "./MIDIFile";
 import {
   createAppStore,
@@ -10,234 +10,20 @@ import {
   ofType,
   Epic,
   Dispatch,
-  combineEpics
+  combineEpics,
+  Batch
 } from "sudetenwaltz/Loop";
 import * as Time from "sudetenwaltz/Time";
-import { ignoreElements, tap } from "rxjs/operators";
+import { ignoreElements, tap, switchMap, map } from "rxjs/operators";
 import { render } from "react-dom";
-
-let piano: any = undefined;
-
-const context = new AudioContext() as any;
-instrument(context, "acoustic_grand_piano").then(loadedPiano => {
-  piano = loadedPiano;
-});
-
-// import * as React from "react";
-// import { render } from "react-dom";
-// import { createStore, StoreEnhancer, Store, compose } from "redux";
-// import { createEnchancer, LoopReducer, EMPTY, Loop } from "sudetenwaltz/Loop";
-// import { EMPTY as RX_EMPTY } from "rxjs";
-
-// // ACTIONS
-
-// interface SaveParsedMidi {
-//   type: "SaveParsedMidi";
-//   payload: unknown;
-// }
-
-// interface SaveParsedMidi {
-//   type: "SaveParsedMidi";
-//   payload: unknown;
-// }
-
-// type Action = SaveParsedMidi;
-
-// // STATE
-
-// interface State {
-//   notes: MidiNote[];
-//   currentIndex: number;
-//   trackedNotes: Map<number, MidiNote>;
-// }
-
-// // REDUCER
-
-// const reducer: LoopReducer<State, Action> = (prevState, action) => {
-//   switch (action.type) {
-//     case "SaveParsedMidi": {
-//       return [
-//         {
-//           ...prevState,
-//           notes: (action.payload as { tracks: any[] }).tracks
-//             .flatMap(track => track.notes)
-//             .sort((a, b) => a.when - b.when)
-//         },
-//         EMPTY
-//       ];
-//     }
-//     default: {
-//       return [prevState, EMPTY];
-//     }
-//   }
-// };
-
-// interface StoreCreator {
-//   <S, A extends Action, Ext, StateExt>(
-//     reducer: LoopReducer<S, A>,
-//     initialLoop: Loop<S, A>,
-//     enhancer?: StoreEnhancer<Ext>
-//   ): Store<S & StateExt, A> & Ext;
-// }
-
-// const composeEnhancers =
-//   (window as any).__REDUX_DEVTOOLS_EXTENSION_COMPOSE__ || compose;
-
-// const store: Store<State, SaveParsedMidi> = (createStore as any)(
-//   reducer,
-//   [{ notes: [], currentIndex: 0, trackedNotes: new Map() }, EMPTY],
-//   composeEnhancers(createEnchancer(effect$ => RX_EMPTY))
-// );
-
-// type MidiNote = any;
-
-// const getNextTick = <A extends { when: number }>(
-//   step: number,
-//   ticks: A[][],
-//   arr: A[]
-// ): A[][] => {
-//   if (arr.length === 0) {
-//     return ticks;
-//   }
-
-//   const maxWhen = 1 * step;
-//   const takeTickNotes = (tickNotes: A[]): A[] => {
-//     if (arr.length === 0 || arr[0].when > maxWhen) {
-//       return tickNotes;
-//     }
-
-//     tickNotes.push(arr.shift()!);
-
-//     return takeTickNotes(tickNotes);
-//   };
-
-//   ticks.push(takeTickNotes([]));
-
-//   return getNextTick(++step, ticks, arr);
-// };
-
-// const positionControl = document.getElementById("position") as HTMLInputElement;
-
-// positionControl.onchange = () => {
-//   currentTime = (+positionControl.value / 100) * duration * 1000;
-//   midiStack = midi.slice();
-//   while (midiStack.length > 0 && midiStack[0].when * 1000 < currentTime) {
-//     midiStack.shift();
-//   }
-// };
-
-// const play = (midi: any) => {
-//   const keys = range(21, 109).map((midiNumber): [number, Element] => [
-//     midiNumber,
-//     document.querySelector(`.key[data-pitch='${midiNumber}']`)!
-//   ]);
-//   const keysMap = Object.fromEntries(keys);
-
-//   console.log(midi);
-//   const context = new AudioContext() as any;
-//   instrument(context, "acoustic_grand_piano").then(piano => {
-//     // store.dispatch({ type: "SaveParsedMidi", payload: midi });
-
-//     let interval = startLoop(piano, keysMap);
-//     document.getElementById("play-button").addEventListener("click", () => {
-//       interval = startLoop(piano, keysMap);
-//     });
-//     document.getElementById("pause-button").addEventListener("click", () => {
-//       clearInterval(interval);
-//     });
-//     document.getElementById("stop-button").addEventListener("click", () => {
-//       clearInterval(interval);
-//       midiStack = midi.slice();
-//       currentTime = 0;
-//       positionControl.value = "0";
-//     });
-
-//     // from(midi.tracks)
-//     //   .pipe(
-//     //     mergeMap((track: any) =>
-//     //       from(getNextTick(1, [], track.notes)).pipe(
-//     //         concatMap(tick => of(tick).pipe(delay(950)))
-//     //       )
-//     //     ),
-//     //     mergeAll()
-//     //   )
-//     //   .subscribe((note: any) => {
-//     //     console.log(note);
-//     //     piano.play(note.pitch, note.when + 2, { duration: note.duration });
-//     //   });
-
-//     // midi.tracks.forEach((track: any) =>
-//     //   track.notes.forEach((note: any) => {
-//     //     setTimeout(() => {
-//     //       console.log(note.pitch);
-//     //       piano.play(note.pitch, undefined, { duration: note.duration });
-//     //       keysMap[note.pitch].classList.add("pressed");
-//     //       setTimeout(() => {
-//     //         keysMap[note.pitch].classList.remove("pressed");
-//     //       }, note.duration * 950);
-//     //     }, note.when * 1000 + 1000);
-//     //   })
-//     // );
-//   });
-// };
-
-// const input = document.getElementById("fileInput") as HTMLInputElement;
-
-// let midi: any[];
-// let midiStack: any[];
-// let currentTime = 0;
-// let duration: number = 0;
-
-// (input as HTMLInputElement).addEventListener("change", function(event) {
-//   const reader = new FileReader();
-
-//   if (input.files) {
-//     reader.readAsArrayBuffer(input.files[0]);
-
-//     reader.onloadend = () => {
-//       if (reader.result instanceof ArrayBuffer) {
-//         const midiFile = new MIDIFile(reader.result);
-//         const parsed: {
-//           tracks: any[];
-//           duration: number;
-//         } = midiFile.parseSong();
-//         duration = parsed.duration;
-//         midi = parsed.tracks
-//           .flatMap(track => track.notes)
-//           .sort((a, b) => a.when - b.when);
-//         midiStack = midi.slice();
-
-//         play(midi);
-//       } else {
-//         throw new Error("FileReader result is not an ArrayBuffer");
-//       }
-//     };
-//   }
-// });
-
-// const startLoop = (piano: any, keysMap: any) => {
-//   const intervalReference = setInterval(() => {
-//     const notesToPlay = [];
-//     currentTime += 5;
-
-//     while (midiStack.length > 0 && midiStack[0].when * 1000 < currentTime) {
-//       notesToPlay.push(midiStack.shift());
-//     }
-
-//     notesToPlay.forEach(note => {
-//       piano.play(note.pitch, undefined, { duration: note.duration });
-//       positionControl.value = ((note.when / duration) * 100).toString();
-//       keysMap[note.pitch].classList.add("pressed");
-//       setTimeout(() => {
-//         keysMap[note.pitch].classList.remove("pressed");
-//       }, note.duration * 950);
-//     });
-//   }, 5);
-
-//   return intervalReference;
-// };
+import { Observable } from "rxjs";
 
 // ACTIONS
+
+interface FetchMidiRequest {
+  type: "FetchMidiRequest";
+  event: React.ChangeEvent<HTMLInputElement>;
+}
 
 interface FetchMidiSuccess {
   type: "FetchMidiSuccess";
@@ -252,7 +38,7 @@ interface Tick {
   type: "Tick";
 }
 
-type Action = FetchMidiSuccess | Play | Tick;
+type Action = FetchMidiRequest | FetchMidiSuccess | Play | Tick;
 
 // EFFECTS
 
@@ -260,6 +46,26 @@ class RenderView extends SilentEff {
   readonly type = "RenderView";
 
   constructor(readonly state: State) {
+    super();
+  }
+}
+
+class LoadMidi extends SilentEff {
+  readonly type = "LoadMidi";
+
+  constructor(readonly event: React.ChangeEvent<HTMLInputElement>) {
+    super();
+  }
+}
+
+class PlayNote extends SilentEff {
+  readonly type = "PlayNote";
+
+  constructor(
+    readonly pitch: number,
+    readonly when: number,
+    readonly duration: number
+  ) {
     super();
   }
 }
@@ -285,8 +91,8 @@ interface PlayingState {
   type: "PlayingState";
   notes: MidiNote[];
   playQueue: MidiNote[];
-  lastTickTimestamp: number;
-  currentTime: number;
+  queuedTime: number;
+  startTime: number;
 }
 
 type State = UploadFileState | ReadyToPlayState | PlayingState;
@@ -302,6 +108,9 @@ const initialLoop: Loop<State, Action> = [
 
 const reducer: LoopReducer<State, Action> = (prevState, action) => {
   switch (action.type) {
+    case "FetchMidiRequest": {
+      return [prevState, new LoadMidi(action.event)];
+    }
     case "FetchMidiSuccess": {
       const state: ReadyToPlayState = {
         type: "ReadyToPlayState",
@@ -316,43 +125,39 @@ const reducer: LoopReducer<State, Action> = (prevState, action) => {
             {
               type: "PlayingState",
               notes: prevState.notes,
+              startTime: 0,
               playQueue: prevState.notes,
-              lastTickTimestamp: performance.now(),
-              currentTime: 0
+              queuedTime: 0
             },
-            new Time.SetInterval(5, () => ({ type: "Tick" }))
+            new Time.SetInterval(30, () => ({ type: "Tick" }))
           ]
         : [prevState, EMPTY];
     }
     case "Tick": {
       if (prevState.type === "PlayingState") {
-        const currentTickTimestamp = performance.now();
-        const currentTime =
-          prevState.currentTime +
-          (currentTickTimestamp - prevState.lastTickTimestamp);
+        const queuedTime = prevState.queuedTime + 31;
         const notesToPlay = [];
 
         let index = 0;
         while (
           prevState.playQueue[index] &&
-          prevState.playQueue[index].when * 1000 < currentTime
+          prevState.playQueue[index].when * 1000 < queuedTime
         ) {
           notesToPlay.push(prevState.playQueue[index]);
           index++;
         }
 
-        notesToPlay.forEach(note => {
-          piano.play(note.pitch, undefined, { duration: note.duration });
-        });
+        const commands = notesToPlay.map(
+          note => new PlayNote(note.pitch, note.when, note.duration)
+        );
 
         return [
           {
             ...prevState,
-            currentTime,
-            playQueue: prevState.playQueue.slice(index),
-            lastTickTimestamp: currentTickTimestamp
+            queuedTime,
+            playQueue: prevState.playQueue.slice(index)
           },
-          EMPTY
+          new Batch(commands)
         ];
       }
 
@@ -370,7 +175,77 @@ const renderViewEpic: Epic<Action> = effect$ =>
     ignoreElements()
   );
 
-const epic = combineEpics<Action>(renderViewEpic, Time.epic as Epic<Action>);
+const prepareToPlayEpic: Epic<Action> = effect$ =>
+  effect$.pipe(
+    ofType<LoadMidi>("LoadMidi"),
+    switchMap(async () => {
+      const context = new AudioContext();
+      const piano = await instrument(context as any, "acoustic_grand_piano");
+
+      return {
+        piano,
+        context
+      };
+    }),
+    switchMap(({ piano, context }) =>
+      effect$.pipe(
+        ofType<PlayNote>("PlayNote"),
+        tap(({ when, pitch, duration }) => {
+          piano.play(pitch as any, when, { duration });
+        }),
+        ignoreElements()
+      )
+    )
+  );
+
+const loadMidiEpic: Epic<Action> = effect$ =>
+  effect$.pipe(
+    ofType<LoadMidi>("LoadMidi"),
+    switchMap(({ event }) => {
+      return new Observable<ArrayBuffer>(subscriber => {
+        const reader = new FileReader();
+
+        if (event.target === null) {
+          throw new Error("event.target is null");
+        }
+
+        const target = event.target as HTMLInputElement;
+        if (target.files === null) {
+          throw new Error("event.target.files is null");
+        }
+
+        reader.readAsArrayBuffer(target.files[0]);
+
+        reader.onloadend = () => {
+          if (reader.result instanceof ArrayBuffer) {
+            subscriber.next(reader.result);
+          } else {
+            throw new Error("FileReader result is not an ArrayBuffer");
+          }
+        };
+      });
+    }),
+    map(buffer => {
+      const midiFile = new MIDIFile(buffer);
+      const parsed: {
+        tracks: any[];
+        duration: number;
+      } = midiFile.parseSong();
+
+      const notes = parsed.tracks
+        .flatMap(track => track.notes)
+        .sort((a, b) => a.when - b.when);
+
+      return { type: "FetchMidiSuccess", notes };
+    })
+  );
+
+const epic = combineEpics<Action>(
+  prepareToPlayEpic,
+  loadMidiEpic,
+  renderViewEpic,
+  Time.epic as Epic<Action>
+);
 
 const store = createAppStore(initialLoop, reducer, epic);
 
@@ -394,39 +269,6 @@ const pitchPositions: Record<number, number> = {
   11: 6
 };
 
-const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-  const reader = new FileReader();
-
-  if (event.target === null) {
-    throw new Error("event.target is null");
-  }
-
-  const target = event.target as HTMLInputElement;
-  if (target.files === null) {
-    throw new Error("event.target.files is null");
-  }
-
-  reader.readAsArrayBuffer(target.files[0]);
-
-  reader.onloadend = () => {
-    if (reader.result instanceof ArrayBuffer) {
-      const midiFile = new MIDIFile(reader.result);
-      const parsed: {
-        tracks: any[];
-        duration: number;
-      } = midiFile.parseSong();
-
-      const notes = parsed.tracks
-        .flatMap(track => track.notes)
-        .sort((a, b) => a.when - b.when);
-
-      store.dispatch({ type: "FetchMidiSuccess", notes });
-    } else {
-      throw new Error("FileReader result is not an ArrayBuffer");
-    }
-  };
-};
-
 const Main: React.FunctionComponent<{
   state: State;
   dispatch: Dispatch<Action>;
@@ -434,7 +276,15 @@ const Main: React.FunctionComponent<{
   const getControls = () => {
     switch (state.type) {
       case "UploadFileState": {
-        return <input type="file" onChange={handleFileChange} />;
+        return (
+          <input
+            type="file"
+            onChange={event => {
+              event.persist();
+              dispatch({ type: "FetchMidiRequest", event });
+            }}
+          />
+        );
       }
       case "ReadyToPlayState": {
         return (
