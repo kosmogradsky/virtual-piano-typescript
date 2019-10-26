@@ -11,12 +11,32 @@ import {
   Epic,
   Dispatch,
   combineEpics,
-  Batch
+  Batch,
+  Effect
 } from "sudetenwaltz/Loop";
 import * as Time from "sudetenwaltz/Time";
-import { ignoreElements, tap, switchMap, map } from "rxjs/operators";
+import {
+  ignoreElements,
+  tap,
+  switchMap,
+  map,
+  skipWhile,
+  take,
+  toArray
+} from "rxjs/operators";
 import { render } from "react-dom";
-import { Observable } from "rxjs";
+import { Observable, from } from "rxjs";
+
+// UTILS
+
+const range = (length: number, from: number) =>
+  Array(length)
+    .fill(undefined)
+    .map((_value, index) => from + index);
+
+function tail<T>(arr: T[]): T | undefined {
+  return arr.length > 0 ? arr[arr.length - 1] : undefined;
+}
 
 // ACTIONS
 
@@ -30,25 +50,19 @@ interface FetchMidiSuccess {
   notes: MidiNote[];
 }
 
-interface Play {
-  type: "Play";
+interface QueueNotes {
+  type: "QueueNotes";
+  offset: number;
 }
 
-interface Tick {
-  type: "Tick";
+interface NoteOn {
+  type: "NoteOn";
+  when: number;
 }
 
-type Action = FetchMidiRequest | FetchMidiSuccess | Play | Tick;
+type Action = FetchMidiRequest | FetchMidiSuccess | QueueNotes | NoteOn;
 
 // EFFECTS
-
-class RenderView extends SilentEff {
-  readonly type = "RenderView";
-
-  constructor(readonly state: State) {
-    super();
-  }
-}
 
 class LoadMidi extends SilentEff {
   readonly type = "LoadMidi";
@@ -64,7 +78,8 @@ class PlayNote extends SilentEff {
   constructor(
     readonly pitch: number,
     readonly when: number,
-    readonly duration: number
+    readonly duration: number,
+    readonly offset: number
   ) {
     super();
   }
@@ -90,9 +105,6 @@ interface ReadyToPlayState {
 interface PlayingState {
   type: "PlayingState";
   notes: MidiNote[];
-  playQueue: MidiNote[];
-  queuedTime: number;
-  startTime: number;
 }
 
 type State = UploadFileState | ReadyToPlayState | PlayingState;
@@ -101,10 +113,7 @@ const initialState: UploadFileState = {
   type: "UploadFileState"
 };
 
-const initialLoop: Loop<State, Action> = [
-  initialState,
-  new RenderView(initialState)
-];
+const initialLoop: Loop<State, Action> = [initialState, EMPTY];
 
 const reducer: LoopReducer<State, Action> = (prevState, action) => {
   switch (action.type) {
@@ -117,63 +126,77 @@ const reducer: LoopReducer<State, Action> = (prevState, action) => {
         notes: action.notes
       };
 
-      return [state, new RenderView(state)];
+      return [state, EMPTY];
     }
-    case "Play": {
-      return prevState.type === "ReadyToPlayState"
-        ? [
-            {
-              type: "PlayingState",
-              notes: prevState.notes,
-              startTime: 0,
-              playQueue: prevState.notes,
-              queuedTime: 0
-            },
-            new Time.SetInterval(30, () => ({ type: "Tick" }))
-          ]
-        : [prevState, EMPTY];
-    }
-    case "Tick": {
-      if (prevState.type === "PlayingState") {
-        const queuedTime = prevState.queuedTime + 31;
-        const notesToPlay = [];
+    case "QueueNotes": {
+      if (
+        prevState.type === "ReadyToPlayState" ||
+        prevState.type === "PlayingState"
+      ) {
+        let notesToPlay: MidiNote[] = [];
 
-        let index = 0;
-        while (
-          prevState.playQueue[index] &&
-          prevState.playQueue[index].when * 1000 < queuedTime
-        ) {
-          notesToPlay.push(prevState.playQueue[index]);
-          index++;
+        from(prevState.notes)
+          .pipe(
+            skipWhile(note =>
+              prevState.type === "ReadyToPlayState"
+                ? note.when < action.offset
+                : note.when <= action.offset + 1
+            ),
+            take(100),
+            toArray()
+          )
+          .subscribe(queuedCommands => {
+            notesToPlay = queuedCommands;
+          });
+
+        const lastNote = tail(notesToPlay);
+
+        if (lastNote === undefined) {
+          return [prevState, EMPTY];
+        } else {
+          const nextQueueingTimeout = new Time.SetTimeout<Action>(
+            (lastNote.when - action.offset - 1) * 1000,
+            () => ({ type: "QueueNotes", offset: lastNote.when - 1 })
+          );
+
+          const playCommands: Effect<Action>[] = notesToPlay.map(
+            note =>
+              new PlayNote(note.pitch, note.when, note.duration, action.offset)
+          );
+
+          const noteOnTimeouts: Effect<Action>[] = Array.from(
+            new Set(notesToPlay.map(note => note.when))
+          ).map(
+            when =>
+              new Time.SetTimeout((when - action.offset) * 1000, () => ({
+                type: "NoteOn",
+                when
+              }))
+          );
+
+          return [
+            { type: "PlayingState", notes: prevState.notes },
+            new Batch(playCommands.concat(noteOnTimeouts, nextQueueingTimeout))
+          ];
         }
-
-        const commands = notesToPlay.map(
-          note => new PlayNote(note.pitch, note.when, note.duration)
-        );
-
-        return [
-          {
-            ...prevState,
-            queuedTime,
-            playQueue: prevState.playQueue.slice(index)
-          },
-          new Batch(commands)
-        ];
       }
 
       return [prevState, EMPTY];
     }
+    case "NoteOn": {
+      console.log(action.when);
+
+      return prevState.type === "PlayingState"
+        ? [
+            {
+              ...prevState
+            },
+            EMPTY
+          ]
+        : [prevState, EMPTY];
+    }
   }
 };
-
-const renderViewEpic: Epic<Action> = effect$ =>
-  effect$.pipe(
-    ofType<RenderView>("RenderView"),
-    tap(({ state }) => {
-      renderView(state);
-    }),
-    ignoreElements()
-  );
 
 const prepareToPlayEpic: Epic<Action> = effect$ =>
   effect$.pipe(
@@ -190,8 +213,10 @@ const prepareToPlayEpic: Epic<Action> = effect$ =>
     switchMap(({ piano, context }) =>
       effect$.pipe(
         ofType<PlayNote>("PlayNote"),
-        tap(({ when, pitch, duration }) => {
-          piano.play(pitch as any, when, { duration });
+        tap(({ when, pitch, duration, offset }) => {
+          piano.play(pitch as any, context.currentTime - offset + when, {
+            duration
+          });
         }),
         ignoreElements()
       )
@@ -243,16 +268,10 @@ const loadMidiEpic: Epic<Action> = effect$ =>
 const epic = combineEpics<Action>(
   prepareToPlayEpic,
   loadMidiEpic,
-  renderViewEpic,
   Time.epic as Epic<Action>
 );
 
 const store = createAppStore(initialLoop, reducer, epic);
-
-const range = (length: number, from: number) =>
-  Array(length)
-    .fill(undefined)
-    .map((_value, index) => from + index);
 
 const pitchPositions: Record<number, number> = {
   0: 0,
@@ -272,7 +291,7 @@ const pitchPositions: Record<number, number> = {
 const Main: React.FunctionComponent<{
   state: State;
   dispatch: Dispatch<Action>;
-}> = ({ state, dispatch }) => {
+}> = React.memo(function Main({ state, dispatch }) {
   const getControls = () => {
     switch (state.type) {
       case "UploadFileState": {
@@ -293,7 +312,7 @@ const Main: React.FunctionComponent<{
               type="button"
               id="play-button"
               style={{ marginRight: 5 }}
-              onClick={() => dispatch({ type: "Play" })}
+              onClick={() => dispatch({ type: "QueueNotes", offset: 0 })}
             >
               Play
             </button>
@@ -371,13 +390,11 @@ const Main: React.FunctionComponent<{
       </div>
     </div>
   );
-};
+});
 
-store.model$.subscribe();
-
-const renderView = (state: State) => {
+store.model$.subscribe((state: State) => {
   render(
     <Main state={state} dispatch={store.dispatch} />,
     document.getElementById("root")
   );
-};
+});
