@@ -20,12 +20,12 @@ import {
   tap,
   switchMap,
   map,
-  skipWhile,
   take,
-  toArray
+  toArray,
+  skip
 } from "rxjs/operators";
 import { render } from "react-dom";
-import { Observable, from } from "rxjs";
+import { Observable, from, of } from "rxjs";
 
 // UTILS
 
@@ -53,6 +53,7 @@ interface FetchMidiSuccess {
 interface QueueNotes {
   type: "QueueNotes";
   offset: number;
+  iteration: number;
 }
 
 interface NoteOn {
@@ -137,11 +138,7 @@ const reducer: LoopReducer<State, Action> = (prevState, action) => {
 
         from(prevState.notes)
           .pipe(
-            skipWhile(note =>
-              prevState.type === "ReadyToPlayState"
-                ? note.when < action.offset
-                : note.when <= action.offset + 1
-            ),
+            skip(action.iteration * 100),
             take(100),
             toArray()
           )
@@ -156,7 +153,11 @@ const reducer: LoopReducer<State, Action> = (prevState, action) => {
         } else {
           const nextQueueingTimeout = new Time.SetTimeout<Action>(
             (lastNote.when - action.offset - 1) * 1000,
-            () => ({ type: "QueueNotes", offset: lastNote.when - 1 })
+            () => ({
+              type: "QueueNotes",
+              offset: lastNote.when - 1,
+              iteration: action.iteration + 1
+            })
           );
 
           const playCommands: Effect<Action>[] = notesToPlay.map(
@@ -268,7 +269,7 @@ const loadMidiEpic: Epic<Action> = effect$ =>
 const epic = combineEpics<Action>(
   prepareToPlayEpic,
   loadMidiEpic,
-  Time.epic as Epic<Action>
+  (Time.epic as Epic<any>) as Epic<Action>
 );
 
 const store = createAppStore(initialLoop, reducer, epic);
@@ -312,7 +313,9 @@ const Main: React.FunctionComponent<{
               type="button"
               id="play-button"
               style={{ marginRight: 5 }}
-              onClick={() => dispatch({ type: "QueueNotes", offset: 0 })}
+              onClick={() =>
+                dispatch({ type: "QueueNotes", offset: 0, iteration: 0 })
+              }
             >
               Play
             </button>
