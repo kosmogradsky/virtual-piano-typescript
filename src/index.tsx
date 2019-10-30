@@ -1,5 +1,5 @@
 import * as React from "react";
-import { instrument, Player } from "soundfont-player";
+import * as loader from "audio-loader";
 import { MIDIFile } from "./MIDIFile";
 import {
   createAppStore,
@@ -25,7 +25,8 @@ import {
   skip
 } from "rxjs/operators";
 import { render } from "react-dom";
-import { Observable, from, of } from "rxjs";
+import { Observable, from } from "rxjs";
+import { acousticGrandPiano } from "./acousticGrandPiano";
 
 // UTILS
 
@@ -186,7 +187,6 @@ const reducer: LoopReducer<State, Action> = (prevState, action) => {
     }
     case "NoteOn": {
       console.log(action.when);
-
       return prevState.type === "PlayingState"
         ? [
             {
@@ -204,7 +204,7 @@ const prepareToPlayEpic: Epic<Action> = effect$ =>
     ofType<LoadMidi>("LoadMidi"),
     switchMap(async () => {
       const context = new AudioContext();
-      const piano = await instrument(context as any, "acoustic_grand_piano");
+      const piano = await loader(acousticGrandPiano);
 
       return {
         piano,
@@ -215,9 +215,23 @@ const prepareToPlayEpic: Epic<Action> = effect$ =>
       effect$.pipe(
         ofType<PlayNote>("PlayNote"),
         tap(({ when, pitch, duration, offset }) => {
-          piano.play(pitch as any, context.currentTime - offset + when, {
-            duration
-          });
+          const source = context.createBufferSource();
+          source.buffer = piano[pitch];
+          source.connect(context.destination);
+
+          const gainNode = context.createGain();
+          gainNode.gain.value = 1;
+
+          gainNode.connect(context.destination);
+          source.connect(gainNode);
+
+          source.start(context.currentTime - offset + when);
+
+          gainNode.gain.linearRampToValueAtTime(
+            0,
+            context.currentTime - offset + when + duration + 0.2
+          );
+          source.stop(context.currentTime - offset + when + duration + 0.3);
         }),
         ignoreElements()
       )
@@ -396,8 +410,10 @@ const Main: React.FunctionComponent<{
 });
 
 store.model$.subscribe((state: State) => {
-  render(
-    <Main state={state} dispatch={store.dispatch} />,
-    document.getElementById("root")
-  );
+  if (state.type !== "PlayingState") {
+    render(
+      <Main state={state} dispatch={store.dispatch} />,
+      document.getElementById("root")
+    );
+  }
 });
